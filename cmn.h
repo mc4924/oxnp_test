@@ -25,6 +25,7 @@ static const unsigned int BUF_SIZE=BUF_DEPTH_SEC*POINTS_PER_SEC;
 static const char* SHARED_MEM_NAME="MySharedMemory";
 static const char* RINGBUF_NAME="THE_RING_BUFFER";
 
-
+// Just a shorthand for the ring buffer type. Note that size and max
+// number of reader is fixed at compile time
 typedef swmr_ringbuffer<data_point_t,BUF_SIZE,3> shm_ringbuf;
 #endif

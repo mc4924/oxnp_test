@@ -1,8 +1,19 @@
 #include <cstddef>
 
+/**
+ * Data structure that implements the guts of the ring buffer.
+ * This is placed in shared memory.
+ * The locking (mutual exclusion) is not applied in this data structure,
+ * but in the swmr_ringbuffer thet wraps it (cannot keep the mutex
+ * reference/pointer in shared memory)
+ */
 template <typename T,size_t BUF_SIZE,size_t NUM_READERS> class swmr_ringbuffer_base {
 public:
 
+    /*
+     * This is the hard bit. Must verify all the read indices to see if we
+     * are overrunning one or more readers.
+     */
     size_t write(const T* data, size_t n) {
         // Can never write more than BUF_SIZE elements;
         if (n>BUF_SIZE)
@@ -19,12 +30,12 @@ public:
         else
             n1=n;
 
-        // Copy the data in the buffer
+        // Copy the data in the buffer, in one or two moves, as required
         memcpy(buf+write_index,data,n1*sizeof(T));
         if (n2)
             memcpy(buf,data+n1,n2*sizeof(T));
 
-        // Move the write index
+        // The new write index will be this one
         size_t new_write_index = (write_index+n) % BUF_SIZE;
 
 
@@ -32,7 +43,13 @@ public:
         // we move forward its read pointer (data is lost for that reader).
         for (auto &rd_desc : reader_descr) {
 
-            // if we have overrun the read index, update it
+            // If we have overrun the read index, update it to skip all the 'lost'
+            // (overwritten) data.
+            // This depends on the position of the write inded BEFORE and AFTER
+            // this write (write_index, new_write_index), if we had a wrap around (n2>0)
+            // and of course the position of the read index.
+            // Note that (write_index==rd_desc.index) can mean 'buffer full' or 'buffer
+            // empty' depending if 'available' is 0 or not.
             if (
                  ( (write_index>rd_desc.index)  && (n2>0) && (new_write_index>rd_desc.index) ) ||
                  ( (write_index<rd_desc.index)  && (new_write_index>rd_desc.index) ) ||
@@ -51,7 +68,10 @@ public:
         return n;
     }
 
-
+    /*
+     * Reading is easier because we cannot overrun.
+     * we need just to keep track of the wrap around.
+     */
     size_t read(size_t reader,T* read_buf,size_t n) {
         if (reader>=NUM_READERS)
             return 0;
@@ -73,7 +93,7 @@ public:
         else
             n1=n;
 
-        // Copy the data from the buffer
+        // Copy the data from the buffer in one or two moves, as required
         memcpy(read_buf,buf+rd.index,n1*sizeof(T));
         if (n2)
             memcpy(read_buf+n1,buf,n2*sizeof(T));
@@ -102,10 +122,11 @@ private:
     // element will be written
     size_t write_index;
 
-    // One entry for each reader
+    // One entry for each reader: the index of where next element will be read
+    // and how many are available to read
     struct {
-        size_t index;      // the index (pointer) to the element that would be read next
-        size_t available;  // how many elements are available to read
+        size_t index;        // The index (pointer) to the element that would be read next
+        uint32_t available;  // How many elements are available to read. Make it 32 bit to ensure reading is atomic
     } reader_descr [NUM_READERS];
 
     // Where the data is stored
@@ -113,6 +134,9 @@ private:
 };
 
 
+/*
+ * Wraps the write with the mutex
+ */
 template <typename T,size_t BUF_SIZE,size_t NUM_READERS>
 size_t swmr_ringbuffer<T,BUF_SIZE,NUM_READERS>::write(const T* data, size_t n) {
     mutex->lock();
@@ -121,11 +145,17 @@ size_t swmr_ringbuffer<T,BUF_SIZE,NUM_READERS>::write(const T* data, size_t n) {
     return ret;
 }
 
+/*
+ * No need to wrap the write with the mutex, as it is already done inside
+ */
 template <typename T,size_t BUF_SIZE,size_t NUM_READERS>
-size_t swmr_ringbuffer<T,BUF_SIZE,NUM_READERS>::write(const T& data) {
-    return write(&data,1);
+void swmr_ringbuffer<T,BUF_SIZE,NUM_READERS>::write(const T& data) {
+    write(&data,1);
 }
 
+/*
+ * Wraps the read with the mutex
+ */
 template <typename T,size_t BUF_SIZE,size_t NUM_READERS>
 size_t swmr_ringbuffer<T,BUF_SIZE,NUM_READERS>::read(size_t reader,T* read_buf,size_t n) {
     mutex->lock();
@@ -134,11 +164,19 @@ size_t swmr_ringbuffer<T,BUF_SIZE,NUM_READERS>::read(size_t reader,T* read_buf,s
     return ret;
 }
 
+/*
+ * No need to wrap the write with the mutex, as reading teh counter is atomic
+ */
 template <typename T,size_t BUF_SIZE,size_t NUM_READERS>
 size_t swmr_ringbuffer<T,BUF_SIZE,NUM_READERS>::read_available(size_t reader) {
     return buf->read_available(reader);
 }
 
+/*
+ * If it does not find the name ringbuffer in the segment, creates it.
+ *
+ * FIXIT: this is not thread/process safe
+ */
 template <typename T,size_t BUF_SIZE,size_t NUM_READERS>
 swmr_ringbuffer<T,BUF_SIZE,NUM_READERS>::swmr_ringbuffer(std::string name,boost::interprocess::managed_shared_memory& segment) : name(name) {
     mutex_name=name+"_mutex";
@@ -155,6 +193,9 @@ swmr_ringbuffer<T,BUF_SIZE,NUM_READERS>::swmr_ringbuffer(std::string name,boost:
     }
 }
 
+/*
+ * FIXIT: should we remove the ringbuffer from the segment?
+ */
 template <typename T,size_t BUF_SIZE,size_t NUM_READERS>
 swmr_ringbuffer<T,BUF_SIZE,NUM_READERS>::~swmr_ringbuffer() {
     boost::interprocess::named_mutex::remove(mutex_name.c_str());

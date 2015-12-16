@@ -2,35 +2,43 @@ Test code to verify interprocess exchange of data using shared memory buffers
 and writing data into HDF5 files.
 
 ----------------
-Tested on:
+**Tested on:**
 
 Linux (Ubuntu 14.04):
-Requires installing BOOST and HDF5:  `apt-get install libhdf5-dev   apt-get install libboost-all-dev`
+Requires installing BOOST and HDF5:  `apt-get install libhdf5-dev`   `apt-get install libboost-all-dev`
 
 Mac OS X (10.11):
 Requires installing BOOST and HDF5 with macports:  `port install boost hdf5`
 
 ------------------
-To build:
+**To build:**
 
 make
 
 ------------------
-To run:
+**To run:**
 
-`obj/generator --seconds 10 & (sleep 1 && obj/reader --id 0 --seconds 8 --size 2000) & (sleep 2 && obj/reader --id 1 --seconds 8 --size 0)&`
+On bash, this command line:
+```
+obj/generator --seconds 22 & \
+(sleep 1 && obj/reader --id 0 --seconds 20 --size 2000) &\
+(sleep 2 && obj/reader --id 1 --seconds 20 --size 0)&
+```
 
-runs a 'generator' and two 'reader' process fro 10 seconds
+will run one 'generator' and two 'reader' processes for 20 seconds
 
 ```
-(generator) ---> [ringbuffer] -+--> (reader 0) ===> data/rdr0-testdata-XXX.h5 (fixed size of 2000 data points)
-                               |
-                               |
-                               +--> (reader 1) ===> data/rdr1-testdata-XXX.h5 (variable size)
+(generator)-->[buf] -+-->(reader 0)---> data/rdr0-testdata-XXX.h5 (fixed size of 2000 data points)
+                     |
+                     |
+                     +-->(reader 1)---> data/rdr1-testdata-XXX.h5 (variable size)
 ```
+
+The two reader processes will write two set of files in the data directory,containing the same
+data from the generator. One set of file is of fixed size, one of variable size.
 
 -------------
-generator.cpp
+**generator.cpp**
 
 Process that generates N data points per seconds and puts them in a ring buffer in
 shared memory.
@@ -39,21 +47,28 @@ A command line parameter allows to specify for how long to run.
 
 
 ----------
-reader.cpp
+**reader.cpp**
 
 Process that reads the ring buffer and puts the data into HDF5 files.
-Command line parameters
-Command line parameter allows to specify for how long to run, the reader ID and the file size (fixed or random).
+Command line parameters allow to specify for how long to run, the reader ID and the file size (fixed or random).
 
 
 ----------
-cmn.h
+**cmn.h**
 
 Common definitions for generator and reader (names for shared memory structures etc)
 
 
 -------------------
-swmr_ringbuffer.h
-swmr_ringbuffer.cpp
+**swmr_ringbuffer.h**
+**swmr_ringbuffer.cpp**
 
 The Single Writer-Multiple Reader ring buffer implementation.
+
+-----------------------
+
+**FIXIT**
+Creator of 'swmr_ringbuffer' is not process safe
+
+Graceful handling of errors/exception
+

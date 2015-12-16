@@ -23,7 +23,7 @@ template <typename T,size_t BUF_SIZE,size_t NUM_READERS> class swmr_ringbuffer_b
  * of the readers. If one of the readers is too slow to extract data, that reader
  * will lose (the oldest) data.
  *
- * The ring buffer can have up to NUM_READERS readers. Each is identifed by an
+ * The ring buffer can have up to NUM_READERS readers. Each is identified by an
  * unsigned integer 0, 1, ... (NUM_READERS-1).
  *
  * This ringbuffer is to be used for communication between different therads/processes,
@@ -39,7 +39,10 @@ template <typename T,size_t BUF_SIZE,size_t NUM_READERS> class swmr_ringbuffer {
 public:
     /**
      * Writes 'n' elements in the ring buffer.
-     * The write always succedes fully, if n>BUF_SIZE.
+     * The write always succedes fully, if n<BUF_SIZE. if n is bigger,
+     * only BUF_SIZE points will be written
+     *
+     * @returns the number of points written
      */
     size_t write(
                 const T* data,  ///< pointer to 'n' elements to write >.
@@ -47,14 +50,17 @@ public:
                 );
 
     /**
-     * Writes a single data element. Always succedes
+     * Writes a single data element. Always succedes.
      */
-    size_t write(
-                const T& data ///< single element to write >.
-                );
+    void write(
+              const T& data ///< single element to write >.
+              );
 
     /**
      * Reads up to 'n' elements from the ring buffer.
+     *
+     * @returns the number of points read (could be less than 'n' if
+     *          there were fewer available to read).
      */
     size_t read(
                 size_t reader_id, ///< Identifier of the reader >.

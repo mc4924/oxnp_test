@@ -1,13 +1,13 @@
 all : obj/generator obj/reader
 
 clean:
-	rm obj/*
+	-rm obj/*
 
 dataclean:
-	rm data/*
+	-rm data/* test/octave-workspace
 
 allclean:
-	rm obj/* data/*
+	-rm obj/* data/*
 
 
 UNAME=$(shell uname)
