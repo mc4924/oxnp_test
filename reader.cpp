@@ -1,7 +1,8 @@
 #include <unistd.h>
+#include <string>
 #include <fstream>
+#include <sstream>
 #include <iostream>
-#include <boost/lockfree/spsc_queue.hpp>
 #include <boost/asio/deadline_timer.hpp>
 #include <boost/date_time/posix_time/posix_time.hpp>
 #include <boost/interprocess/managed_shared_memory.hpp>
@@ -17,6 +18,10 @@ using namespace std;
 using namespace boost;
 using namespace H5;
 
+// Reader for the generator/reader example.
+// This process reads data points from the ring buffer named RINGBUF_NAME and writes
+// them on consecutive HDF5 files.
+
 
 /// How frequently to wake up to read the points
 static const unsigned int INTERVAL_MSEC=40;
@@ -24,64 +29,41 @@ static const unsigned int INTERVAL_MSEC=40;
 /// How many points to read every time
 static const unsigned int POINTS_PER_INTERVAL=(POINTS_PER_SEC/1000)*INTERVAL_MSEC;
 
-// Names for the oputput file and its only dataset
-const H5std_string OUT_FILE_NAME("testdata.h5");
+
+
+
+// Names for the oputput files and the dataset
+const char* file_name_prefix="data/testdata";
 const H5std_string DATASET_NAME("dset");
 
 
+
+volatile bool running;
+
 void signal_handler(const system::error_code& error, int signal_number)
 {
-  if (!error)
-  {
-    cout << "GOTCHA! (" << signal_number << ")\n";
-    exit(0);
-  }
+    running=false;
 }
 
 int main()
 {
-    unsigned long count=0,num_points=0;
-
     // Handling of SIGINT
     asio::io_service     signal_ios;
 
     // Construct a signal set registered for process termination.
     boost::asio::signal_set signals(signal_ios, SIGINT);
 
-    // Start a abckground asynchronous wait for SIGINT to occur.
+    // Start a background asynchronous wait for SIGINT to occur.
     signals.async_wait(signal_handler);
     thread(bind(&asio::io_service::run,boost::ref(signal_ios))).detach();
+
+    interprocess::managed_shared_memory segment(interprocess::open_only, SHARED_MEM_NAME);
+    shm_ringbuf buf(RINGBUF_NAME,segment);
+
 
     asio::io_service     ios;
     posix_time::milliseconds interval(INTERVAL_MSEC);
 
-    interprocess::named_mutex mutex(interprocess::open_only,MUTEX_NAME);
-
-    interprocess::managed_shared_memory segment(interprocess::open_only, SHARED_MEM_NAME);
-    shm_data_ringbuf* buf=segment.find<shm_data_ringbuf>( RINGBUF_NAME ).first;
-    if (buf==NULL) {
-        cerr << "cannot find " << RINGBUF_NAME << endl;
-        exit(-1);
-    }
-
-    H5File file(OUT_FILE_NAME, H5F_ACC_TRUNC);
-
-    hsize_t dims[1]={POINTS_PER_INTERVAL};   // How many points in a dataset
-    hsize_t maxdims[1] = {H5S_UNLIMITED};
-    hsize_t chunk_dims[1] ={POINTS_PER_INTERVAL};
-
-    DataSpace *dataspace = new DataSpace (1, dims,maxdims);
-
-    // Modify dataset creation property to enable chunking
-    DSetCreatPropList prop;
-    prop.setChunk(1, chunk_dims);
-
-    // Create the dataset.
-    DataSet *dataset = new DataSet(file.createDataSet( DATASET_NAME,PredType::IEEE_F64LE, *dataspace, prop) );
-    if (dataset==NULL) {
-        cout << "dataset not created\n";
-        exit(-1);
-    }
 
     // Construct a timer with an absolute expiry time.
     posix_time::ptime  next_t=posix_time::microsec_clock::local_time()+interval;
@@ -89,53 +71,66 @@ int main()
     timer.wait();
     ios.run();
 
+
+ofstream refFile("data/testdata.txt");
+
     DataSpace *filespace=NULL;
     DataSpace *memspace=NULL;
-    for (int k=0;k<10;k++) {
-        data_point_t filebuf[POINTS_PER_INTERVAL];
-        mutex.lock();
-        unsigned int n=buf->pop(filebuf,POINTS_PER_INTERVAL);
-        mutex.unlock();
+    running=true;
+    H5File *output_file=NULL;
+    DataSet dataset;
+    DataSpace dataspace;
+    unsigned long num_points=0,file_num=0;
+    while (running) {
 
-        if (num_points==0) {
-            // First write we do in the file
-            dataset->write(filebuf, PredType::NATIVE_DOUBLE);
-        } else {
-            hsize_t offset[1] = {dims[0]};
-            hsize_t dimsext[1]= {POINTS_PER_INTERVAL};
-            dims[0] += num_points;
-            dataset->extend(dims);
-            // Select a hyperslab in extended portion of the dataset.
-            if (filespace) delete filespace;
-            filespace = new DataSpace(dataset->getSpace());
-            filespace->selectHyperslab(H5S_SELECT_SET, dimsext, offset);
+        if (output_file==NULL) {
+            ostringstream out_file_name;
+            out_file_name << file_name_prefix << setfill('0') << setw(3) << file_num++ << ".h5";
+            string filename=out_file_name.str();
+            output_file=new H5File(H5std_string(filename), H5F_ACC_TRUNC);
 
-            // Define memory space.
-            if (memspace) delete memspace;
-            memspace = new DataSpace(1, dimsext, NULL);
+            cout << "Writing data into " << filename << endl;
 
-            // Write data to the extended portion of the dataset.
-            dataset->write(filebuf, PredType::NATIVE_DOUBLE, *memspace, *filespace);
+            hsize_t dim[1]={POINTS_PER_FILE};   // How many points in the dataset in this file
+            dataspace=DataSpace(1, dim);
+            dataset = output_file->createDataSet( DATASET_NAME, PredType::IEEE_F64LE, dataspace );
         }
+
+
+        data_point_t filebuf[POINTS_PER_INTERVAL];
+        unsigned int n=buf.read(0,filebuf,POINTS_PER_INTERVAL);
+        if (n!=POINTS_PER_INTERVAL)
+            cout << "ERROR: read returns " << n << " instead of " << POINTS_PER_INTERVAL << endl;
+
+for (int k=0;k<POINTS_PER_INTERVAL;k++)
+    refFile << filebuf[k] << endl;
+
+        hsize_t memdim[1]={POINTS_PER_INTERVAL};
+        hsize_t offset[1]={num_points};
+        hsize_t count[1]={POINTS_PER_INTERVAL};
+        hsize_t stride[1]={1};
+        hsize_t block[1]={1};
+        DataSpace memspace(1, memdim);
+        dataspace.selectHyperslab(H5S_SELECT_SET, count, offset, stride, block);
+        dataset.write(filebuf, PredType::NATIVE_DOUBLE,memspace,dataspace);
+
         num_points += n;
 
-        count++;
-        if ((count%50)==0) {
-            cout << num_points << " points written" << endl;
+
+        if (num_points==POINTS_PER_FILE) {
+            dataset.close();
+            output_file->close();
+            delete output_file;
+            output_file=NULL;
+            num_points=0;
         }
+
+
 
         next_t += interval;
         timer.expires_at(next_t);
         timer.wait();
     }
-cout << "Almost finished\n";
-    prop.close();
-    delete filespace;
-    delete memspace;
-    delete dataspace;
-    delete dataset;
-cout << "Closing file\n";
-    file.close();
 
     return 0;
 }

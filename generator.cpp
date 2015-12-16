@@ -3,8 +3,8 @@
 #include <boost/lockfree/spsc_queue.hpp>
 #include <boost/asio/deadline_timer.hpp>
 #include <boost/date_time/posix_time/posix_time.hpp>
-#include <boost/interprocess/managed_shared_memory.hpp>
-#include <boost/interprocess/sync/named_mutex.hpp>
+#include <boost/asio/signal_set.hpp>
+#include <boost/thread.hpp>
 
 #include "cmn.h"
 
@@ -19,10 +19,14 @@ using namespace boost;
 
 
 
+// Size of the buffer in bytes
+static const unsigned int BUF_SIZE_BYTES=BUF_SIZE*sizeof(data_point_t);
+
+
 static const unsigned int INTERVAL_MSEC=20;
 static const unsigned int POINTS_PER_INTERVAL=(POINTS_PER_SEC/1000)*INTERVAL_MSEC;
 
-static const unsigned int SHM_ADDTIONAL=512;
+static const unsigned int SHM_ADDTIONAL=2048;
 
 
 
@@ -31,52 +35,65 @@ struct shm_remove {
    ~shm_remove(){ remove_all(); }
    void remove_all() {
        interprocess::shared_memory_object::remove(SHARED_MEM_NAME);
-       interprocess::named_mutex::remove(MUTEX_NAME);
    }
 } remover;
 
+void signal_handler(const system::error_code& error, int signal_number)
+{
+    exit(0);
+}
 
 int main()
 {
-    unsigned long count=0;
 
-    asio::io_service     ios;
-    posix_time::milliseconds interval(INTERVAL_MSEC);
+    try {
+        // Handling of SIGINT
+        asio::io_service     signal_ios;
 
-    interprocess::managed_shared_memory segment(interprocess::create_only, SHARED_MEM_NAME, sizeof(shm_data_ringbuf)+SHM_ADDTIONAL);
-    interprocess::named_mutex mutex(interprocess::create_only,MUTEX_NAME);
+        // Construct a signal set registered for process termination.
+        boost::asio::signal_set signals(signal_ios, SIGINT);
 
-    shm_data_ringbuf* buf=segment.construct<shm_data_ringbuf>(RINGBUF_NAME)();
-    if (buf==NULL) {
-        cerr << "cannot construct " << RINGBUF_NAME << endl;
-        exit(-1);
-    }
+        // Start a background asynchronous wait for SIGINT to occur.
+        signals.async_wait(signal_handler);
+        thread(bind(&asio::io_service::run,boost::ref(signal_ios))).detach();
 
-    // Construct a timer with an absolute expiry time.
-    posix_time::ptime  next_t=posix_time::microsec_clock::local_time()+interval;
-    asio::deadline_timer timer(ios,next_t);
-    timer.wait();
-    ios.run();
+        unsigned long count=0;
 
-    double t=0;
-    while (1) {
-        for (int k=0;k<POINTS_PER_INTERVAL;k++) {
-            mutex.lock();
-            if (buf->write_available()==0)
-                buf->pop();
-            buf->push(2.78*sin(t)+3.14*cos(t/10));
-            mutex.unlock();
+        asio::io_service     ios;
+        posix_time::milliseconds interval(INTERVAL_MSEC);
 
-            t+=0.01;
-        }
-        count++;
-        if ((count%50)==0) {
-            cout << "buffer contains "<< buf->read_available() << " elements " <<  endl;
-        }
+        interprocess::managed_shared_memory segment(interprocess::create_only, SHARED_MEM_NAME, BUF_SIZE_BYTES+SHM_ADDTIONAL);
 
-        next_t += interval;
-        timer.expires_at(next_t);
+        shm_ringbuf buf(RINGBUF_NAME,segment);
+
+        // Construct a timer with an absolute expiry time.
+        posix_time::ptime  next_t=posix_time::microsec_clock::local_time()+interval;
+        asio::deadline_timer timer(ios,next_t);
         timer.wait();
+        ios.run();
+
+        double t=0;
+        while (1) {
+            for (int k=0;k<POINTS_PER_INTERVAL;k++) {
+
+                // Write one data point
+                size_t n=buf.write(2.78*sin(t)+3.14*cos(t/10));
+
+                if (n!=1)
+                    cout << "ERROR: write returns "<< n << endl;
+                t+=0.01;
+            }
+            count++;
+            if ((count%50)==0) {
+                cout << "buffer contains "<< buf.read_available(0) << " elements " <<  endl;
+            }
+
+            next_t += interval;
+            timer.expires_at(next_t);
+            timer.wait();
+        }
+    } catch (...) {
+        cout << "Got an exception\n";
     }
 
     return 0;
