@@ -12,11 +12,11 @@ allclean:
 
 UNAME=$(shell uname)
 ifeq ($(UNAME),Linux)
-   LIBS=-lboost_system -lboost_thread -lhdf5 -lhdf5_cpp -lrt -pthread
+   LIBS=-lboost_system -lboost_thread -lboost_program_options -lhdf5 -lhdf5_cpp -lrt -pthread
    LIB_DIRS=
    INC_DIRS=
 else ifeq ($(UNAME),Darwin)
-   LIBS=-lboost_system-mt -lboost_thread-mt -lhdf5 -lhdf5_cpp
+   LIBS=-lboost_system-mt -lboost_thread-mt -lboost_program_options-mt -lhdf5 -lhdf5_cpp
    LIB_DIRS=-L/opt/local/lib
    INC_DIRS=-I/opt/local/include
 endif

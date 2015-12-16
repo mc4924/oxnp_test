@@ -7,6 +7,7 @@
 #include <boost/interprocess/sync/named_mutex.hpp>
 
 
+// The data structure that is in shared memory
 template <typename T,size_t BUF_SIZE,size_t NUM_READERS> class swmr_ringbuffer_base;
 
 
@@ -25,10 +26,13 @@ template <typename T,size_t BUF_SIZE,size_t NUM_READERS> class swmr_ringbuffer_b
  * The ring buffer can have up to NUM_READERS readers. Each is identifed by an
  * unsigned integer 0, 1, ... (NUM_READERS-1).
  *
- * This is to be used for communication between different therads/processes, so
- * all methods are thread/process safe.
+ * This ringbuffer is to be used for communication between different therads/processes,
+ * so all methods are thread/process safe (using BOOST interprocess::named_mutex).
  * To ensure inter-process capability the ring buffer itself is placed in shared memory,
  * using BOOST 'interprocess::managed_shared_memory'.
+ *
+ * The type of data in the buffer, the size (statically allocated at creation) and
+ * the max number of readers are all template parameters.
  */
 template <typename T,size_t BUF_SIZE,size_t NUM_READERS> class swmr_ringbuffer {
 
@@ -43,7 +47,7 @@ public:
                 );
 
     /**
-     * Writes a single data element
+     * Writes a single data element. Always succedes
      */
     size_t write(
                 const T& data ///< single element to write >.
@@ -67,19 +71,23 @@ public:
                          );
 
     /**
-     * Constructs a ring buffer with name 'name' in a shared memeory segment
+     * Constructs a ring buffer with name 'name' in a shared memory segment
      */
     swmr_ringbuffer(
                     std::string name,
                     boost::interprocess::managed_shared_memory& segment
                    );
 
+    ~swmr_ringbuffer();
 private:
     swmr_ringbuffer() {}; // Cannot construct without arguments
 
-    boost::interprocess::named_mutex *mutex=NULL;   // The lock that make it thread/process safe
+    std::string name;       // name of the ringbuffer in shared memory
+    std::string mutex_name; // name of the mutex
 
-    swmr_ringbuffer_base<T,BUF_SIZE,NUM_READERS> *buf=NULL; // Pointer of thhe data structure in shared memory
+    boost::interprocess::named_mutex *mutex=NULL;   // The mutex that make it thread/process safe
+
+    swmr_ringbuffer_base<T,BUF_SIZE,NUM_READERS> *buf=NULL; // Pointer of the ringbuffer data structure in shared memory
 };
 
 

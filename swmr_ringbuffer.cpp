@@ -140,16 +140,22 @@ size_t swmr_ringbuffer<T,BUF_SIZE,NUM_READERS>::read_available(size_t reader) {
 }
 
 template <typename T,size_t BUF_SIZE,size_t NUM_READERS>
-swmr_ringbuffer<T,BUF_SIZE,NUM_READERS>::swmr_ringbuffer(std::string name,boost::interprocess::managed_shared_memory& segment) {
-    std::string mutex_name=name+"_mutex";
+swmr_ringbuffer<T,BUF_SIZE,NUM_READERS>::swmr_ringbuffer(std::string name,boost::interprocess::managed_shared_memory& segment) : name(name) {
+    mutex_name=name+"_mutex";
     buf=segment.find<swmr_ringbuffer_base<T,BUF_SIZE,NUM_READERS>>( name.c_str() ).first;
     if (buf==NULL) {
-        segment.destroy<swmr_ringbuffer_base<T,BUF_SIZE,NUM_READERS>>( name.c_str() );
-        buf=segment.construct<swmr_ringbuffer_base<T,BUF_SIZE,NUM_READERS>>( name.c_str() )();
+        // Destroy structures in shared memory, if leftover from previous instance that crashed
         boost::interprocess::named_mutex::remove(mutex_name.c_str());
+
+        buf=segment.construct<swmr_ringbuffer_base<T,BUF_SIZE,NUM_READERS>>( name.c_str() )();
         mutex=new boost::interprocess::named_mutex(boost::interprocess::create_only,mutex_name.c_str());
         buf->init();
     } else {
         mutex=new boost::interprocess::named_mutex(boost::interprocess::open_only,mutex_name.c_str());
     }
+}
+
+template <typename T,size_t BUF_SIZE,size_t NUM_READERS>
+swmr_ringbuffer<T,BUF_SIZE,NUM_READERS>::~swmr_ringbuffer() {
+    boost::interprocess::named_mutex::remove(mutex_name.c_str());
 }

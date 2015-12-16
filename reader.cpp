@@ -7,8 +7,11 @@
 #include <boost/date_time/posix_time/posix_time.hpp>
 #include <boost/interprocess/managed_shared_memory.hpp>
 #include <boost/interprocess/sync/named_mutex.hpp>
-#include <boost/asio/signal_set.hpp>
-#include <boost/thread.hpp>
+
+#include <boost/program_options/options_description.hpp>
+#include <boost/program_options/variables_map.hpp>
+#include <boost/program_options/parsers.hpp>
+
 #include "H5Cpp.h"
 
 #include "cmn.h"
@@ -30,36 +33,29 @@ static const unsigned int INTERVAL_MSEC=40;
 static const unsigned int POINTS_PER_INTERVAL=(POINTS_PER_SEC/1000)*INTERVAL_MSEC;
 
 
+/// How many points to write in every HDF5 file
+static unsigned int points_per_file=5000;
 
 
 // Names for the oputput files and the dataset
-const char* file_name_prefix="data/testdata";
+const char* file_name_dir="data";
+const char* file_name_prefix="testdata";
 const H5std_string DATASET_NAME("dset");
 
 
+unsigned int seconds_to_run=600;
+unsigned int reader_id=0;
 
-volatile bool running;
+void parse_args(int argc,char *argv[]);
 
-void signal_handler(const system::error_code& error, int signal_number)
+
+int main(int argc, char *argv[])
 {
-    running=false;
-}
 
-int main()
-{
-    // Handling of SIGINT
-    asio::io_service     signal_ios;
-
-    // Construct a signal set registered for process termination.
-    boost::asio::signal_set signals(signal_ios, SIGINT);
-
-    // Start a background asynchronous wait for SIGINT to occur.
-    signals.async_wait(signal_handler);
-    thread(bind(&asio::io_service::run,boost::ref(signal_ios))).detach();
+    parse_args(argc,argv);
 
     interprocess::managed_shared_memory segment(interprocess::open_only, SHARED_MEM_NAME);
     shm_ringbuf buf(RINGBUF_NAME,segment);
-
 
     asio::io_service     ios;
     posix_time::milliseconds interval(INTERVAL_MSEC);
@@ -72,65 +68,107 @@ int main()
     ios.run();
 
 
-ofstream refFile("data/testdata.txt");
-
     DataSpace *filespace=NULL;
     DataSpace *memspace=NULL;
-    running=true;
     H5File *output_file=NULL;
     DataSet dataset;
     DataSpace dataspace;
-    unsigned long num_points=0,file_num=0;
-    while (running) {
+    unsigned long file_num=0,count_intervals=0;
+    size_t total_to_read; // how many data points in current file
+    size_t num_points;  // how many data points already read in current file
+    while (true) {
 
         if (output_file==NULL) {
             ostringstream out_file_name;
-            out_file_name << file_name_prefix << setfill('0') << setw(3) << file_num++ << ".h5";
+            out_file_name << file_name_dir << "/rdr" << reader_id << "-" << file_name_prefix << "-" << setfill('0') << setw(3) << file_num++ << ".h5";
             string filename=out_file_name.str();
             output_file=new H5File(H5std_string(filename), H5F_ACC_TRUNC);
 
-            cout << "Writing data into " << filename << endl;
+            if (points_per_file==0) {
+                // A random number of data points
+                total_to_read = 2000+double(rand())/RAND_MAX*2*BUF_SIZE;
+            } else {
+                total_to_read =points_per_file;
+            }
+            num_points=0;
 
-            hsize_t dim[1]={POINTS_PER_FILE};   // How many points in the dataset in this file
+            cout << "Reader " << reader_id << ": Writing " << total_to_read << " data points into " << filename << endl;
+
+
+            hsize_t dim[1]={total_to_read};   // How many points in the dataset in this file
             dataspace=DataSpace(1, dim);
             dataset = output_file->createDataSet( DATASET_NAME, PredType::IEEE_F64LE, dataspace );
         }
 
+        size_t n_to_read= (total_to_read>POINTS_PER_INTERVAL)? POINTS_PER_INTERVAL : total_to_read;
 
         data_point_t filebuf[POINTS_PER_INTERVAL];
-        unsigned int n=buf.read(0,filebuf,POINTS_PER_INTERVAL);
-        if (n!=POINTS_PER_INTERVAL)
-            cout << "ERROR: read returns " << n << " instead of " << POINTS_PER_INTERVAL << endl;
+        unsigned int n=buf.read(reader_id,filebuf,n_to_read);
+        if (n!=n_to_read)
+            cout << "ERROR: read returns " << n << " instead of " << n_to_read << endl;
 
-for (int k=0;k<POINTS_PER_INTERVAL;k++)
-    refFile << filebuf[k] << endl;
-
-        hsize_t memdim[1]={POINTS_PER_INTERVAL};
+        hsize_t memdim[1]={n_to_read};
         hsize_t offset[1]={num_points};
-        hsize_t count[1]={POINTS_PER_INTERVAL};
+        hsize_t count[1]={n_to_read};
         hsize_t stride[1]={1};
         hsize_t block[1]={1};
         DataSpace memspace(1, memdim);
         dataspace.selectHyperslab(H5S_SELECT_SET, count, offset, stride, block);
         dataset.write(filebuf, PredType::NATIVE_DOUBLE,memspace,dataspace);
 
-        num_points += n;
+        num_points    += n;
+        total_to_read -= n;
 
 
-        if (num_points==POINTS_PER_FILE) {
+        if (total_to_read==0) {
             dataset.close();
             output_file->close();
             delete output_file;
             output_file=NULL;
-            num_points=0;
         }
 
-
-
         next_t += interval;
-        timer.expires_at(next_t);
-        timer.wait();
+        count_intervals++;
+
+        if (count_intervals < (seconds_to_run*1000/INTERVAL_MSEC)) {
+            timer.expires_at(next_t);
+            timer.wait();
+        } else
+            break;
     }
 
     return 0;
+}
+
+void parse_args(int argc,char *argv[])
+{
+    namespace po = boost::program_options;
+
+    // Declare the supported options.
+    po::options_description desc("Allowed options");
+
+    desc.add_options()
+        ("help", "produce help message")
+        ("id", po::value<unsigned int>(), "reader Id")
+        ("seconds", po::value<unsigned int>(), "how many seconds to run")
+        ("size", po::value<unsigned int>(), "file size (in data points). '0' means random size")
+    ;
+
+    po::variables_map vm;
+    po::store(po::parse_command_line(argc,argv, desc), vm);
+    po::notify(vm);
+
+    if (vm.count("help")) {
+        cout << desc << "\n";
+        exit(0);
+    }
+
+    if (vm.count("id"))
+        reader_id= vm["id"].as<unsigned int>();
+
+    if (vm.count("seconds"))
+        seconds_to_run= vm["seconds"].as<unsigned int>();
+
+    if (vm.count("size"))
+        points_per_file= vm["size"].as<unsigned int>();
 }

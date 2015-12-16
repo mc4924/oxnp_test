@@ -20,10 +20,6 @@ static const unsigned int BUF_DEPTH_SEC=10;
 static const unsigned int BUF_SIZE=BUF_DEPTH_SEC*POINTS_PER_SEC;
 
 
-/// How many points to write in every HDF5 file
-static const unsigned int POINTS_PER_FILE=5000;
-
-
 // Names to open/create the interprocess communication structures:
 // shared memory segment and ring buffer
 static const char* SHARED_MEM_NAME="MySharedMemory";
