@@ -1,4 +1,4 @@
-all : obj/generator obj/reader
+all : obj/generator obj/reader obj/transformer
 
 clean:
 	-rm obj/*
@@ -22,10 +22,22 @@ else ifeq ($(UNAME),Darwin)
 endif
 
 
-obj/generator: obj/generator.o cmn.h swmr_ringbuffer.h swmr_ringbuffer.cpp makefile
+obj/generator.o: generator.cpp cmn.h swmr_ringbuffer.h swmr_ringbuffer.cpp
+
+obj/generator: obj/generator.o makefile
 	g++ $(LIB_DIRS) -o $@ $< $(LIBS)
 
-obj/reader: obj/reader.o cmn.h swmr_ringbuffer.h swmr_ringbuffer.cpp makefile
+
+
+obj/reader.o: reader.cpp cmn.h swmr_ringbuffer.h swmr_ringbuffer.cpp
+
+obj/reader: obj/reader.o makefile
+	g++ $(LIB_DIRS) -o $@ $< $(LIBS)
+
+
+obj/transformer.o: transformer.cpp cmn.h swmr_ringbuffer.h swmr_ringbuffer.cpp
+
+obj/transformer: obj/transformer.o makefile
 	g++ $(LIB_DIRS) -o $@ $< $(LIBS)
 
 obj/%.o: %.cpp

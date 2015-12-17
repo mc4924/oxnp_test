@@ -6,7 +6,6 @@
 #include <boost/asio/deadline_timer.hpp>
 #include <boost/date_time/posix_time/posix_time.hpp>
 #include <boost/interprocess/managed_shared_memory.hpp>
-#include <boost/interprocess/sync/named_mutex.hpp>
 
 #include <boost/program_options/options_description.hpp>
 #include <boost/program_options/variables_map.hpp>
@@ -44,10 +43,12 @@ const H5std_string DATASET_NAME("dset");
 
 
 //------------- Modified with the command line arguments --------
+string tag;
 unsigned int seconds_to_run=600;
 unsigned int reader_id=0;
 /// How many points to write in every HDF5 file
-unsigned int points_per_file=5000;
+unsigned int points_per_file=2000000;
+string ringbuffer_name="";
 
 void parse_args(int argc,char *argv[]);
 
@@ -58,7 +59,7 @@ int main(int argc, char *argv[])
     parse_args(argc,argv);
 
     interprocess::managed_shared_memory segment(interprocess::open_only, SHARED_MEM_NAME);
-    shm_ringbuf buf(RINGBUF_NAME,segment);
+    shm_ringbuf buf(ringbuffer_name,segment);
 
     // Construct a timer with an absolute expiry time so that we can pace
     // without drift
@@ -83,7 +84,7 @@ int main(int argc, char *argv[])
         // Need to open a new file?
         if (output_file==NULL) {
             ostringstream out_file_name;
-            out_file_name << file_name_dir << "/rdr" << reader_id << "-" << file_name_prefix << "-" << setfill('0') << setw(3) << file_num++ << ".h5";
+            out_file_name << file_name_dir << "/" << tag << "-" << file_name_prefix << "-" << setfill('0') << setw(3) << file_num++ << ".h5";
             string filename=out_file_name.str();
             output_file=new H5File(H5std_string(filename), H5F_ACC_TRUNC);
 
@@ -107,8 +108,8 @@ int main(int argc, char *argv[])
 
         data_point_t filebuf[POINTS_PER_INTERVAL];
         unsigned int n=buf.read(reader_id,filebuf,n_to_read);
-        if (n!=n_to_read)
-            cout << "ERROR: read returns " << n << " instead of " << n_to_read << endl;
+        //if (n!=n_to_read)
+        //    cout << "ERROR: read returns " << n << " instead of " << n_to_read << endl;
 
         hsize_t memdim[1]={n_to_read};
         hsize_t offset[1]={num_points};
@@ -130,10 +131,10 @@ int main(int argc, char *argv[])
             output_file=NULL;
         }
 
-        next_t += interval;
         count_intervals++;
 
         if (count_intervals < (seconds_to_run*1000/INTERVAL_MSEC)) {
+            next_t += interval;
             timer.expires_at(next_t);
             timer.wait();
         } else
@@ -156,6 +157,8 @@ void parse_args(int argc,char *argv[])
 
     desc.add_options()
         ("help", "write this help message")
+        ("tag", po::value<string>() ,"tag for this reader")
+        ("buf", po::value<string>() ,"name of the ringbuffer")
         ("id", po::value<unsigned int>(), "reader Id")
         ("seconds", po::value<unsigned int>(), "how many seconds to run")
         ("size", po::value<unsigned int>(), "file size (in data points). '0' means random size")
@@ -168,6 +171,20 @@ void parse_args(int argc,char *argv[])
     if (vm.count("help")) {
         cout << desc << "\n";
         exit(0);
+    }
+
+    if (vm.count("tag"))
+        tag= vm["tag"].as<string>();
+    if (tag.empty()) {
+        cerr << "ERROR: need to specify a tag for thsi reader" << endl;
+        exit(-1);
+    }
+
+    if (vm.count("buf"))
+        ringbuffer_name= vm["buf"].as<string>();
+    if (ringbuffer_name.empty()) {
+        cerr << "ERROR: need to specify ringbuffer name" << endl;
+        exit(-1);
     }
 
     if (vm.count("id"))

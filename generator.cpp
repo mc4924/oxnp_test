@@ -1,11 +1,8 @@
 #include <unistd.h>
 #include <sstream>
 #include <iostream>
-#include <boost/lockfree/spsc_queue.hpp>
 #include <boost/asio/deadline_timer.hpp>
 #include <boost/date_time/posix_time/posix_time.hpp>
-#include <boost/asio/signal_set.hpp>
-#include <boost/thread.hpp>
 
 #include <boost/program_options/options_description.hpp>
 #include <boost/program_options/variables_map.hpp>
@@ -50,8 +47,9 @@ int main(int argc,char *argv[])
 
     // Ring buffer in shared memory. First remove it, if it was left over from a previous aborted run
     interprocess::shared_memory_object::remove(SHARED_MEM_NAME);
-    interprocess::managed_shared_memory segment(interprocess::create_only, SHARED_MEM_NAME, BUF_SIZE_BYTES+SHM_ADDTIONAL);
-    shm_ringbuf buf(RINGBUF_NAME,segment);
+    interprocess::managed_shared_memory segment(interprocess::create_only, SHARED_MEM_NAME, 2*BUF_SIZE_BYTES+SHM_ADDTIONAL);
+    shm_ringbuf buf(RINGBUF_NAME1,segment);
+    shm_ringbuf buf1(RINGBUF_NAME2,segment);
 
 
     // Construct a timer with an absolute expiry time so that we can pace
@@ -80,10 +78,9 @@ int main(int argc,char *argv[])
             cout << "buffer contains "<< buf.read_available(0) << " elements " <<  endl;
         }
 
-        next_t += interval;
-
         // If not done yet, we restart the timer
         if (count < (seconds_to_run*1000/INTERVAL_MSEC)) {
+            next_t += interval;
             timer.expires_at(next_t);
             timer.wait();
         } else
