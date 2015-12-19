@@ -19,6 +19,9 @@
  * of the readers. If one of the readers is too slow to extract data, that reader
  * will lose (the oldest) data.
  *
+ * The implementation uses a semaphore for locking, but it can be easily modified to
+ * not use locking (in which case the writer overrun woudl behave differently).
+ *
  * The ring buffer can have up to NUM_READERS readers. Each is identified by an
  * unsigned integer 0, 1, ... (NUM_READERS-1).
  *
@@ -26,9 +29,14 @@
  * so all methods are thread/process safe (using BOOST interprocess::named_mutex).
  * To ensure inter-process capability the ring buffer itself is placed in shared memory,
  * using BOOST 'interprocess::managed_shared_memory'.
+ * This object itself is not in shared memory, but has a pointer to the shared data
+ * memory structure.
  *
  * The type of data in the buffer, the size (statically allocated at creation) and
  * the max number of readers are all template parameters.
+ *
+ * Note that the shared memory data structures need to be created before calling the
+ * constructor: see comments for the constructor and the static method construct()
  */
 template <typename T,size_t BUF_SIZE,size_t NUM_READERS> class swmr_ringbuffer {
 
@@ -77,17 +85,37 @@ public:
                           size_t reader_id ///< Identifier of the reader >.
                          );
 
+    /**
+     * Returns the size of the shared memory data structure.
+     */
     static size_t get_shm_size();
 
+    /**
+     * Build the data structure in shared memory.
+     * Needs to be called (possibly by a different process) before calling
+     * the constructor.
+     * The shared memeory data structures will persist process termination
+     * and need ot be destroyed explicitly with:
+     *    swmr_ringbuffer<...>::remove(name)
+     */
     static bool construct(
                            const char * name,
                            boost::interprocess::managed_shared_memory& segment
                          );
 
+    /**
+     * Destroys the shared memeory data structures.
+     */
     static bool remove(
                        const char * name
                       );
 
+    /**
+     * This creates the instance that will be used by the process that calls it,
+     * but the shared data structure must already have been created beforehand
+     * in shared memory (with 'name') using the static method:
+     *     swmr_ringbuffer<...>::construct(name,segment)
+     */
     swmr_ringbuffer(
                     const char * name,
                     boost::interprocess::managed_shared_memory& segment
@@ -95,7 +123,7 @@ public:
 
 private:
 
-    // The data structure in shared memory
+    // The data structure in shared memory. Just the poinetr is stored in this object
     struct shm_buf
     {
         // Only one writer, only one write index (pointer), i.e. where the next
@@ -105,17 +133,20 @@ private:
         // One entry for each reader: the index of where next element will be read
         // and how many are available to read
         struct {
-            size_t index;        // The index (pointer) to the element that would be read next
-            uint32_t available;  // How many elements are available to read. Make it 32 bit to ensure reading is atomic
+            // The index (pointer) to the element that would be read next
+            size_t index;
+            // How many elements are available to read. Make it 32 bit to ensure reading
+            // is atomic on the majority of reasonably modern CPU architectures
+            uint32_t available;
         } reader_descr [NUM_READERS];
 
         // Where the data is stored
         T data[BUF_SIZE];
-    } *buf;
+    } *buf=NULL;
 
-    boost::interprocess::named_mutex *mutex=NULL;   // The mutex that make it thread/process safe
+    boost::interprocess::named_mutex *mutex=NULL;   // The mutex that makes it thread/process safe
 
-    swmr_ringbuffer() {}; // cannot be created without the needed parameters
+    swmr_ringbuffer() {}; // Avoid creation without the needed parameters
 };
 
 

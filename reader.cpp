@@ -20,14 +20,14 @@ using namespace boost;
 using namespace H5;
 
 // Reader for the generator/reader example.
-// This process reads data points from the ring buffer named RINGBUF_NAME and writes
-// them on consecutive HDF5 files.
+// This process reads data points from the ring buffer named 'ringbuffer_name' and
+// writes them on consecutive HDF5 files.
 // Each file will have either a fixed size or a random size, depending on a command
 // line parameter.
 // To evenly spread the CPU load, the reader wakes up every INTERVAL_MSEC
 // milliseconds and read the appropriate amount of data points to read POINTS_PER_SEC
 // points every seconds.
-// Each file will have a single dataset
+// Each file will contain a single dataset.
 
 
 /// How frequently to wake up to read the points
@@ -47,8 +47,7 @@ const char* file_name_prefix="testdata";
 string tag;  // a prefix for the file names
 unsigned int seconds_to_run=600;
 unsigned int reader_id=0;
-/// How many points to write in every HDF5 file
-unsigned int file_size=2000000;
+unsigned int file_size=2000000; // How many points to write in every HDF5 file
 string ringbuffer_name="";
 bool quiet=false;
 

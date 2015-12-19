@@ -74,7 +74,7 @@ int main(int argc,char *argv[])
 
         // Continue while this condition is true
         [&j] {
-            return j < (seconds_to_run*POINTS_PER_SEC); // Total points to generate
+            return j < (seconds_to_run*POINTS_PER_SEC); // j < (Total points to generate) ?
         }
     );
 

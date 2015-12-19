@@ -13,7 +13,7 @@ Requires installing BOOST and HDF5 with macports:  `port install boost hdf5`
 ------------------
 **To build:**
 
-Uses gnu make so just use: `make`. This will build teh main objects and the test objects as well
+Uses gnu make so just use: `make`. This will build the main objects and the test objects as well
 
 ------------------
 **To run:**
@@ -59,7 +59,7 @@ amplitude and frequency).
 Process that sets up the interprocess data structures (shared memory and mutexes). Needs to run before
 the other processes.
 
-When run with --remove will destroy the data structures.
+When run with `--remove` will destroy the data structures.
 
 
 -------------
@@ -93,7 +93,6 @@ writer and multiple reader (identified by an integer ID: 0, 1,..).
 Each reader independently reads the whole sequence written by the writer.
 If one reader is slower in reading than the writer in writing, that reader will lose the oldest
 data in the buffer.
-Buitl to work for interprocess communication, so it uses inetrprocess shared memory.
 
 ----------
 **period_repeat.h**
@@ -138,16 +137,21 @@ the HDF5 files is in accordance with the generate() and transform() functions de
 
 There are two bash test scripts:
 
-`test/test2.sh` runs one generator and one reader. After that it runs **verify_results**.
+`test/test2.sh`
+
+runs one generator and one reader. After that it runs **verify_results**.
 If succesfull, it would print the message:
 ```
    Verification succesful
 ```
 
 
-`test/test3.sh` runs generator two readers and transformer as explained above.
-After that it runs **verify_results** twice on the two sets of files
-If succesfull, it would print two messages:
+`test/test3.sh`
+
+runs the generator, two readers and a transformer as explained above.
+After that, it runs **verify_results** twice on the two sets of files.
+
+If successful, it would print two messages:
 
 ```
    Verification succesful
@@ -165,5 +169,6 @@ Use counting semaphore to make the ringbuffer read() call block if buffer is emp
 
 Make ringbuffer sizeable at runtime instead of compile time
 
+Destroy the shared memory ringbuffer structure in swmr_ringbuffer<...>::remove()
 
 

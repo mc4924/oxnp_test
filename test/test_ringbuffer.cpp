@@ -19,7 +19,7 @@ If the test is succesful, the following messages are printed (in a random order)
   Reader o: all reads completed
   Reader 1: all reads completed
 
-The test code (test/test_ringbuffer.cpp) uses fork() twice to spawn the two readers processes.
+Uses fork() twice to spawn the two readers processes.
 
 */
 
