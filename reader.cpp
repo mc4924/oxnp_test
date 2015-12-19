@@ -3,9 +3,6 @@
 #include <fstream>
 #include <sstream>
 #include <iostream>
-#include <boost/asio/deadline_timer.hpp>
-#include <boost/date_time/posix_time/posix_time.hpp>
-#include <boost/interprocess/managed_shared_memory.hpp>
 
 #include <boost/program_options/options_description.hpp>
 #include <boost/program_options/variables_map.hpp>
@@ -14,6 +11,8 @@
 #include "H5Cpp.h"
 
 #include "cmn.h"
+
+#include "period_repeat.h"
 
 
 using namespace std;
@@ -26,6 +25,7 @@ using namespace H5;
 // To evenly spread the CPU load, the reader wakes up every INTERVAL_MSEC
 // milliseconds and read the appropriate amount of data points to read POINTS_PER_SEC
 // points every seconds.
+// Each file will have a single dataset
 
 
 /// How frequently to wake up to read the points
@@ -39,110 +39,117 @@ static const unsigned int POINTS_PER_INTERVAL=(POINTS_PER_SEC/1000)*INTERVAL_MSE
 // Names for the output files and the dataset
 const char* file_name_dir="data";
 const char* file_name_prefix="testdata";
-const H5std_string DATASET_NAME("dset");
 
 
 //------------- Modified with the command line arguments --------
-string tag;
+string tag;  // a prefix for the file names
 unsigned int seconds_to_run=600;
 unsigned int reader_id=0;
 /// How many points to write in every HDF5 file
-unsigned int points_per_file=2000000;
+unsigned int file_size=2000000;
 string ringbuffer_name="";
+bool quiet=false;
 
 void parse_args(int argc,char *argv[]);
 
 
 int main(int argc, char *argv[])
 {
-
     parse_args(argc,argv);
 
+    // Setup for the ring buffer, which must have been ALREDAY CREATED (this
+    // just opens it)
     interprocess::managed_shared_memory segment(interprocess::open_only, SHARED_MEM_NAME);
-    shm_ringbuf buf(ringbuffer_name,segment);
+    shm_ringbuf buf(ringbuffer_name.c_str(),segment);
 
-    // Construct a timer with an absolute expiry time so that we can pace
-    // without drift
-    asio::io_service     ios;
-    posix_time::milliseconds interval(INTERVAL_MSEC);
-    posix_time::ptime  next_t=posix_time::microsec_clock::local_time()+interval;
-    asio::deadline_timer timer(ios,next_t);
-    timer.wait();
-    ios.run();
 
+    // Total points to read
+    size_t total_points=seconds_to_run*POINTS_PER_SEC;
 
     DataSpace *filespace=NULL;
     DataSpace *memspace=NULL;
     H5File *output_file=NULL;
     DataSet dataset;
     DataSpace dataspace;
-    unsigned long file_num=0,count_intervals=0;
-    size_t total_to_read; // how many data points in current file
-    size_t num_points;  // how many data points already read in current file
-    while (true) {
+    unsigned long file_num=0; // will increment with each file generated
+    size_t points_in_file;    // how many data points in current file
+    size_t num_points;        // how many data points already read in current file
 
-        // Need to open a new file?
-        if (output_file==NULL) {
-            ostringstream out_file_name;
-            out_file_name << file_name_dir << "/" << tag << "-" << file_name_prefix << "-" << setfill('0') << setw(3) << file_num++ << ".h5";
-            string filename=out_file_name.str();
-            output_file=new H5File(H5std_string(filename), H5F_ACC_TRUNC);
+    period_repeat(
 
-            if (points_per_file==0) {
-                // A random number of data points
-                total_to_read = 2000+double(rand())/RAND_MAX*1.2*BUF_SIZE;
-            } else {
-                total_to_read =points_per_file;
+        INTERVAL_MSEC,  // How frequently to repeat
+
+        // What to do each time
+        [&] {
+            // Need to open a new file?
+            if (output_file==NULL) {
+                ostringstream out_file_name;
+                out_file_name << file_name_dir << "/" << tag << "-" << file_name_prefix << "-" << setfill('0') << setw(3) << file_num++ << ".h5";
+                string filename=out_file_name.str();
+                output_file=new H5File(H5std_string(filename), H5F_ACC_TRUNC);
+
+                if (file_size==0) {
+                    // File will contain a random number of data points
+                    points_in_file = 2000+double(rand())/RAND_MAX*1.2*BUF_SIZE;
+                } else {
+                    points_in_file =file_size;
+                }
+                // if we have only fewer points left to generate in total
+                if (total_points<points_in_file)
+                    points_in_file=total_points;
+
+
+                num_points=0;
+
+                // Print a message just for feedback
+                if (!quiet)
+                    cout << "Reader " << reader_id << ": Writing " << points_in_file << " data points into " << filename << endl;
+
+
+                hsize_t dim[1]={points_in_file};   // How many points in the dataset in this file
+                dataspace=DataSpace(1, dim);
+                dataset = output_file->createDataSet( H5std_string(DATASET_NAME), PredType::IEEE_F64LE, dataspace );
             }
-            num_points=0;
 
-            cout << "Reader " << reader_id << ": Writing " << total_to_read << " data points into " << filename << endl;
+            // Read from the ring buffer a chunk of up to POINTS_PER_INTERVAL points
+            // (fewer if the points left to write in the file are fewer)
+            size_t n_to_read= (points_in_file>POINTS_PER_INTERVAL)? POINTS_PER_INTERVAL : points_in_file;
 
+            data_point_t filebuf[POINTS_PER_INTERVAL];
+            unsigned int n=buf.read(reader_id,filebuf,n_to_read);
 
-            hsize_t dim[1]={total_to_read};   // How many points in the dataset in this file
-            dataspace=DataSpace(1, dim);
-            dataset = output_file->createDataSet( DATASET_NAME, PredType::IEEE_F64LE, dataspace );
+            // Select the dataset hyperslab and write them
+            hsize_t memdim[1]={n};
+            hsize_t offset[1]={num_points};
+            hsize_t count[1]={n};
+            hsize_t stride[1]={1};
+            hsize_t block[1]={1};
+            DataSpace memspace(1, memdim);
+            dataspace.selectHyperslab(H5S_SELECT_SET, count, offset, stride, block);
+            dataset.write(filebuf, PredType::NATIVE_DOUBLE,memspace,dataspace);
+
+            num_points    += n;
+            points_in_file -= n;
+            total_points  -= n;
+
+            // If finished with the file, close it
+            if (points_in_file==0) {
+                dataset.close();
+                output_file->close();
+                delete output_file;
+                output_file=NULL;
+            }
+        },
+
+        // Continue while this condition is true
+        [&total_points] {
+            return total_points>0;
         }
-
-        size_t n_to_read= (total_to_read>POINTS_PER_INTERVAL)? POINTS_PER_INTERVAL : total_to_read;
-
-        data_point_t filebuf[POINTS_PER_INTERVAL];
-        unsigned int n=buf.read(reader_id,filebuf,n_to_read);
-        //if (n!=n_to_read)
-        //    cout << "ERROR: read returns " << n << " instead of " << n_to_read << endl;
-
-        hsize_t memdim[1]={n_to_read};
-        hsize_t offset[1]={num_points};
-        hsize_t count[1]={n_to_read};
-        hsize_t stride[1]={1};
-        hsize_t block[1]={1};
-        DataSpace memspace(1, memdim);
-        dataspace.selectHyperslab(H5S_SELECT_SET, count, offset, stride, block);
-        dataset.write(filebuf, PredType::NATIVE_DOUBLE,memspace,dataspace);
-
-        num_points    += n;
-        total_to_read -= n;
-
-
-        if (total_to_read==0) {
-            dataset.close();
-            output_file->close();
-            delete output_file;
-            output_file=NULL;
-        }
-
-        count_intervals++;
-
-        if (count_intervals < (seconds_to_run*1000/INTERVAL_MSEC)) {
-            next_t += interval;
-            timer.expires_at(next_t);
-            timer.wait();
-        } else
-            break;
-    }
+    );
 
     return 0;
 }
+
 
 /**
  * Parsing command line arguments, using BOOST.
@@ -194,5 +201,5 @@ void parse_args(int argc,char *argv[])
         seconds_to_run= vm["seconds"].as<unsigned int>();
 
     if (vm.count("size"))
-        points_per_file= vm["size"].as<unsigned int>();
+        file_size= vm["size"].as<unsigned int>();
 }

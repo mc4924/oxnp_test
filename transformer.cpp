@@ -1,9 +1,6 @@
 #include <unistd.h>
 #include <string>
 #include <iostream>
-#include <boost/asio/deadline_timer.hpp>
-#include <boost/date_time/posix_time/posix_time.hpp>
-#include <boost/interprocess/managed_shared_memory.hpp>
 
 #include <boost/program_options/options_description.hpp>
 #include <boost/program_options/variables_map.hpp>
@@ -12,6 +9,8 @@
 #include "H5Cpp.h"
 
 #include "cmn.h"
+
+#include "period_repeat.h"
 
 
 using namespace std;
@@ -45,43 +44,38 @@ int main(int argc, char *argv[])
 {
     parse_args(argc,argv);
 
+    // Setup for the ring buffers, which must have been ALREDAY CREATED (this
+    // just opens them)
     interprocess::managed_shared_memory segment(interprocess::open_only, SHARED_MEM_NAME);
-    shm_ringbuf  buf_in(ringbuf_in_name,segment);
-    shm_ringbuf  buf_out(ringbuf_out_name,segment);
-
-    // Construct a timer with an absolute expiry time so that we can pace
-    // without drift
-    asio::io_service     ios;
-    posix_time::milliseconds interval(INTERVAL_MSEC);
-    posix_time::ptime  next_t=posix_time::microsec_clock::local_time()+interval;
-    asio::deadline_timer timer(ios,next_t);
-    timer.wait();
-    ios.run();
+    shm_ringbuf  buf_in(ringbuf_in_name.c_str(),segment);
+    shm_ringbuf  buf_out(ringbuf_out_name.c_str(),segment);
 
 
-    size_t count_intervals=0;
-    while (true) {
-        data_point_t membuf[POINTS_PER_INTERVAL];
+    size_t j=0;   // counter for read/written points
 
-        // Read the data from one ring buffer
-        unsigned int n=buf_in.read(reader_id,membuf,POINTS_PER_INTERVAL);
-        if (n!=POINTS_PER_INTERVAL)
-            cout << "ERROR: read returns " << n << " instead of " << POINTS_PER_INTERVAL << endl;
+    period_repeat(
 
-        for (int k=0;k<n;k++)
-            membuf[k] *= 2.0;
+        INTERVAL_MSEC, // How frequently to repeat
 
-        buf_out.write(membuf,POINTS_PER_INTERVAL);
+        // What to do each time
+        [&] {
+            data_point_t membuf[POINTS_PER_INTERVAL];
 
-        count_intervals++;
+            // Read the data from one ring buffer, one chunk at a time
+            unsigned int n=buf_in.read(reader_id,membuf,POINTS_PER_INTERVAL);
 
-        if (count_intervals < (seconds_to_run*1000/INTERVAL_MSEC)) {
-            next_t += interval;
-            timer.expires_at(next_t);
-            timer.wait();
-        } else
-            break;
-    }
+            for (int k=0;k<n;k++)
+                membuf[k] = transform(j++,membuf[k]);
+
+            // Write to the other buffer
+            buf_out.write(membuf,n);
+        },
+
+        // Continue while this condition is true
+        [&j] {
+            return j < (seconds_to_run*POINTS_PER_SEC); // Total points to generate
+        }
+    );
 
     return 0;
 }

@@ -3,12 +3,8 @@
 
 #include <cstddef>
 #include <string>
-#include <boost/interprocess/managed_shared_memory.hpp>
 #include <boost/interprocess/sync/named_mutex.hpp>
 
-
-// The data structure that is in shared memory
-template <typename T,size_t BUF_SIZE,size_t NUM_READERS> class swmr_ringbuffer_base;
 
 
 /**
@@ -58,6 +54,7 @@ public:
 
     /**
      * Reads up to 'n' elements from the ring buffer.
+     * Will throw 'std::invalid_argument', if reader_id is invalid.
      *
      * @returns the number of points read (could be less than 'n' if
      *          there were fewer available to read).
@@ -71,29 +68,54 @@ public:
 
     /**
      * Returns the number of elements that can be read by a reader.
+     * Will throw 'std::invalid_argument', if reader_id is invalid.
+     *
+     * @returns how many data points are available to read from the buffer
+     *          (for thsi reader).
      */
     size_t read_available(
                           size_t reader_id ///< Identifier of the reader >.
                          );
 
-    /**
-     * Constructs a ring buffer with name 'name' in a shared memory segment
-     */
+    static size_t get_shm_size();
+
+    static bool construct(
+                           const char * name,
+                           boost::interprocess::managed_shared_memory& segment
+                         );
+
+    static bool remove(
+                       const char * name
+                      );
+
     swmr_ringbuffer(
-                    std::string name,
+                    const char * name,
                     boost::interprocess::managed_shared_memory& segment
                    );
 
-    ~swmr_ringbuffer();
 private:
-    swmr_ringbuffer() {}; // Cannot construct without arguments
 
-    std::string name;       // name of the ringbuffer in shared memory
-    std::string mutex_name; // name of the mutex
+    // The data structure in shared memory
+    struct shm_buf
+    {
+        // Only one writer, only one write index (pointer), i.e. where the next
+        // element will be written
+        size_t write_index;
+
+        // One entry for each reader: the index of where next element will be read
+        // and how many are available to read
+        struct {
+            size_t index;        // The index (pointer) to the element that would be read next
+            uint32_t available;  // How many elements are available to read. Make it 32 bit to ensure reading is atomic
+        } reader_descr [NUM_READERS];
+
+        // Where the data is stored
+        T data[BUF_SIZE];
+    } *buf;
 
     boost::interprocess::named_mutex *mutex=NULL;   // The mutex that make it thread/process safe
 
-    swmr_ringbuffer_base<T,BUF_SIZE,NUM_READERS> *buf=NULL; // Pointer of the ringbuffer data structure in shared memory
+    swmr_ringbuffer() {}; // cannot be created without the needed parameters
 };
 
 

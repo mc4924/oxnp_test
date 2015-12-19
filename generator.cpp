@@ -1,14 +1,15 @@
 #include <unistd.h>
 #include <sstream>
 #include <iostream>
-#include <boost/asio/deadline_timer.hpp>
-#include <boost/date_time/posix_time/posix_time.hpp>
 
 #include <boost/program_options/options_description.hpp>
 #include <boost/program_options/variables_map.hpp>
 #include <boost/program_options/parsers.hpp>
 
 #include "cmn.h"
+
+#include "period_repeat.h"
+
 
 using namespace std;
 using namespace boost;
@@ -21,20 +22,16 @@ using namespace boost;
 
 
 
-// Size of the buffer in bytes
-static const unsigned int BUF_SIZE_BYTES=BUF_SIZE*sizeof(data_point_t);
-
-
 static const unsigned int INTERVAL_MSEC=20;
 static const unsigned int POINTS_PER_INTERVAL=(POINTS_PER_SEC/1000)*INTERVAL_MSEC;
 
-static const unsigned int SHM_ADDTIONAL=2048;
 
 
 
 //------------- Modified with the command line arguments --------
 unsigned int seconds_to_run=600;
 unsigned int reader_id=0;
+bool quiet=false;
 
 void parse_args(int argc,char *argv[]);
 
@@ -44,53 +41,48 @@ int main(int argc,char *argv[])
 {
     parse_args(argc,argv);
 
-
-    // Ring buffer in shared memory. First remove it, if it was left over from a previous aborted run
-    interprocess::shared_memory_object::remove(SHARED_MEM_NAME);
-    interprocess::managed_shared_memory segment(interprocess::create_only, SHARED_MEM_NAME, 2*BUF_SIZE_BYTES+SHM_ADDTIONAL);
+    // Setup for the ring buffer, which must have been ALREDAY CREATED (this
+    // just opens it)
+    interprocess::managed_shared_memory segment(interprocess::open_only, SHARED_MEM_NAME);
     shm_ringbuf buf(RINGBUF_NAME1,segment);
-    shm_ringbuf buf1(RINGBUF_NAME2,segment);
 
 
-    // Construct a timer with an absolute expiry time so that we can pace
-    // without drift
-    asio::io_service     ios;
-    posix_time::milliseconds interval(INTERVAL_MSEC);
-    posix_time::ptime  next_t=posix_time::microsec_clock::local_time()+interval;
-    asio::deadline_timer timer(ios,next_t);
-    timer.wait();
-    ios.run();
+    size_t j=0;   // counter for generated points
 
+    period_repeat(
 
-    unsigned long count=0;  // How many interval elapsed so far
-    double t=0;
-    while (true) {
-        for (int k=0;k<POINTS_PER_INTERVAL;k++) {
+        INTERVAL_MSEC, // How frequently to repeat
 
-            // Write one data point
-            buf.write(2.78*sin(t)+3.14*cos(t/10));
+        // What to do each time
+        [&] {
 
-            t+=0.01;
+            // Generate a chunk of data points in memory
+            data_point_t membuf[POINTS_PER_INTERVAL];
+            for (auto &x : membuf)
+                x=generate(j++);
+
+            // Write the chunk to the ring buffer
+            buf.write(membuf,POINTS_PER_INTERVAL);
+
+            // Every second print a message (just for feedback)
+            if (!quiet && (j%POINTS_PER_SEC)==0) {
+                cout << "buffer contains [ ";
+                for (int k=0;k<MAX_READERS;k++)
+                    cout << buf.read_available(k) << " ";
+                cout << "] points" <<  endl;
+            }
+        },
+
+        // Continue while this condition is true
+        [&j] {
+            return j < (seconds_to_run*POINTS_PER_SEC); // Total points to generate
         }
-        count++;
-
-        if ((count%50)==0) {
-            cout << "buffer contains "<< buf.read_available(0) << " elements " <<  endl;
-        }
-
-        // If not done yet, we restart the timer
-        if (count < (seconds_to_run*1000/INTERVAL_MSEC)) {
-            next_t += interval;
-            timer.expires_at(next_t);
-            timer.wait();
-        } else
-            break;
-    }
-
-    interprocess::shared_memory_object::remove(SHARED_MEM_NAME);
+    );
 
     return 0;
 }
+
+
 
 
 /**
