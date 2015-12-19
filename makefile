@@ -1,5 +1,5 @@
 
-all : obj/setup obj/generator obj/reader obj/transformer
+all : obj/setup obj/generator obj/reader obj/transformer obj/test_ringbuffer obj/verify_results
 
 clean:
 	-rm obj/*

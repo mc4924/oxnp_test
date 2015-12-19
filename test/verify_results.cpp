@@ -83,7 +83,7 @@ int main(int argc, char *argv[])
                 if (do_transform)
                     x_ref = transform(j,x_ref);
 
-                 if (x!=x_ref) {
+                if (x!=x_ref) {
                     static bool do_print=true;
                     mismatch_count++;
 
@@ -97,9 +97,10 @@ int main(int argc, char *argv[])
                         }
                     }
                 }
-            }
 
-            j++;
+                j++;
+           }
+
 
 
             offset[0] += n;
@@ -110,7 +111,7 @@ int main(int argc, char *argv[])
     } // all files
 
     if (mismatch_count==0)
-        cout << "Verification succesful" << endl;
+        cout << "Verification successful" << endl;
     else
         cout << "ERROR: " << mismatch_count << " mismatches found" << endl;
     return 0;

@@ -28,9 +28,8 @@ static const unsigned int POINTS_PER_INTERVAL=(POINTS_PER_SEC/1000)*INTERVAL_MSE
 
 
 
-//------------- Modified with the command line arguments --------
+//------------- Modified using command line arguments --------
 unsigned int seconds_to_run=600;
-unsigned int reader_id=0;
 bool quiet=false;
 
 void parse_args(int argc,char *argv[]);
@@ -98,6 +97,7 @@ void parse_args(int argc,char *argv[])
 
     desc.add_options()
         ("help", "write this help message")
+        ("quiet", "don't print any message")
         ("seconds", po::value<unsigned int>(), "how many seconds to run")
     ;
 
@@ -109,6 +109,9 @@ void parse_args(int argc,char *argv[])
         cout << desc << "\n";
         exit(0);
     }
+
+   if (vm.count("quiet"))
+        quiet=true;;
 
     if (vm.count("seconds"))
         seconds_to_run= vm["seconds"].as<unsigned int>();

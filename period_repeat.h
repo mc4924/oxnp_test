@@ -2,10 +2,15 @@
 #include <boost/date_time/posix_time/posix_time.hpp>
 
 
+/**
+ * Repeat periodically an action at a timed interval.
+ * Conveniece function to avoid repetitive code.
+ * Uses boost::asio::deadline_timer. See Boos docs for details
+ */
 void period_repeat(
-                   unsigned long interval_msec,
-                   std::function< void() > action,
-                   std::function< bool() > condition
+                   unsigned long interval_msec,      ///< how frequently to do it (msec)>.
+                   std::function< void() > action,   ///<what to do>.
+                   std::function< bool() > condition ///<repeat while this return true>.
                   )
 {
     // Construct a timer with an absolute expiry time so that we can pace

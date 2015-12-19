@@ -22,6 +22,8 @@ using namespace H5;
 // Reader for the generator/reader example.
 // This process reads data points from the ring buffer named RINGBUF_NAME and writes
 // them on consecutive HDF5 files.
+// Each file will have either a fixed size or a random size, depending on a command
+// line parameter.
 // To evenly spread the CPU load, the reader wakes up every INTERVAL_MSEC
 // milliseconds and read the appropriate amount of data points to read POINTS_PER_SEC
 // points every seconds.
@@ -164,6 +166,7 @@ void parse_args(int argc,char *argv[])
 
     desc.add_options()
         ("help", "write this help message")
+        ("quiet", "don't print any message")
         ("tag", po::value<string>() ,"tag for this reader")
         ("buf", po::value<string>() ,"name of the ringbuffer")
         ("id", po::value<unsigned int>(), "reader Id")
@@ -179,6 +182,10 @@ void parse_args(int argc,char *argv[])
         cout << desc << "\n";
         exit(0);
     }
+
+
+    if (vm.count("quiet"))
+        quiet=true;;
 
     if (vm.count("tag"))
         tag= vm["tag"].as<string>();

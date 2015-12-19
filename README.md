@@ -13,7 +13,7 @@ Requires installing BOOST and HDF5 with macports:  `port install boost hdf5`
 ------------------
 **To build:**
 
-Uses gnu make so just use: `make`
+Uses gnu make so just use: `make`. This will build teh main objects and the test objects as well
 
 ------------------
 **To run:**
@@ -25,10 +25,9 @@ obj/generator --seconds 20 & \
 (sleep 1 && obj/reader --tag rdrA --buf RING_BUFFER1 --id 0 --seconds 20 --size 2000000) &\
 (sleep 2 && obj/transformer --inbuf RING_BUFFER1 --id 1 --outbuf RING_BUFFER2 --seconds 20)&\
 (sleep 3 && obj/reader --tag rdrB --buf RING_BUFFER2  --seconds 20 --size 0)
-
 ```
 
-will run one 'generator', one 'transformer' and two 'reader' processes for 20 seconds
+will run one 'generator', one 'transformer' and two 'reader' processes for 20 seconds (see also TESTING below)
 
 ```
 (generator)-->[buf1] -+-->(reader A)---> data/rdrA-testdata-XXX.h5 (fixed size of 2000000 data points)
@@ -60,6 +59,8 @@ amplitude and frequency).
 Process that sets up the interprocess data structures (shared memory and mutexes). Needs to run before
 the other processes.
 
+When run with --remove will destroy the data structures.
+
 
 -------------
 **generator.cpp**
@@ -85,8 +86,7 @@ of the ring buffers, the reader ID.
 
 
 -------------------
-**swmr_ringbuffer.h**
-**swmr_ringbuffer.cpp**
+**swmr_ringbuffer.h**;  **swmr_ringbuffer.cpp**
 
 The Single Writer-Multiple Reader ring buffer implementation. A buffer of this type has a single
 writer and multiple reader (identified by an integer ID: 0, 1,..).
@@ -130,10 +130,30 @@ The test code (test/test_ringbuffer.cpp) uses fork() twice to spawn the two read
 
 
 
-**Testing the main generator and reader:**
+**Testing the generator, reader and transfromer:**
 
 `make obj/verify_results` builds an object that verifies if the sequence of data written in
 the HDF5 files is in accordance with the generate() and transform() functions defined in `cmn.h`
+
+
+There are two bash test scripts:
+
+`test/test2.sh` runs one generator and one reader. After that it runs **verify_results**.
+If succesfull, it would print the message:
+```
+   Verification succesful
+```
+
+
+`test/test3.sh` runs generator two readers and transformer as explained above.
+After that it runs **verify_results** twice on the two sets of files
+If succesfull, it would print two messages:
+
+```
+   Verification succesful
+   Verification succesful
+```
+
 
 ----------
 
@@ -145,12 +165,5 @@ Use counting semaphore to make the ringbuffer read() call block if buffer is emp
 
 Make ringbuffer sizeable at runtime instead of compile time
 
-Tests:
-
-1. ring buffer unit tests
-
-2. generator reader test
-
-3. Full system test
 
 
